@@ -29,6 +29,8 @@ let db = null;
 app.post("/participants", async (req, res) => {
     const { name } = req.body
 
+
+
     const participant = {
         name: name,
         lastStatus: Date.now()
@@ -46,11 +48,18 @@ app.post("/participants", async (req, res) => {
         await mongoClient.connect();
         db = mongoClient.db("test");
 
-        await db.collection("participants").insertOne(participant);
-        await db.collection("messages").insertOne(enter);
-        res.sendStatus(201);
+        const namesFound = await db.collection("participants").find({ name: name }).toArray();
+        console.log(namesFound.length)
 
+        if (!namesFound.length) {
+            await db.collection("participants").insertOne(participant);
+            await db.collection("messages").insertOne(enter);
+            res.sendStatus(201);
+        } else {
+            res.sendStatus(409)
+        }
         mongoClient.close();
+
 
     } catch (e) {
         console.log(e);
