@@ -4,6 +4,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { MongoClient } from "mongodb";
 import dayjs from "dayjs";
+import Joi from "joi";
+
 
 dotenv.config();
 
@@ -23,12 +25,13 @@ let db = null;
 
 
 
-//TODO: validar nomes iguais 
-// TODO: Fazer validações do body com o JOI
 //TODO: Validações de erros
 app.post("/participants", async (req, res) => {
     const { name } = req.body
 
+    const nameSchema = Joi.object({
+        name: Joi.string().alphanum().min(3).required()
+    })
 
 
     const participant = {
@@ -48,10 +51,10 @@ app.post("/participants", async (req, res) => {
         await mongoClient.connect();
         db = mongoClient.db("test");
 
-        const namesFound = await db.collection("participants").find({ name: name }).toArray();
-        console.log(namesFound.length)
+        const objectValidated = await nameSchema.validateAsync({ name: name }) //valida se a string não ta vazia
+        const namesFound = await db.collection("participants").find(objectValidated).toArray();
 
-        if (!namesFound.length) {
+        if (!namesFound.length) { //verifica se ja existe o nome
             await db.collection("participants").insertOne(participant);
             await db.collection("messages").insertOne(enter);
             res.sendStatus(201);
@@ -91,22 +94,39 @@ app.get("/participants", async (req, res) => {
 app.get("/messages", async (req, res) => {
 })
 
-//TODO: validar o body e headers
 app.post("/messages", async (req, res) => {
     const user = req.headers.user;
-    const { to, type, text } = req.body;
+    const body = req.body;
 
-    const message = {
-        from: user,
-        to,
-        type,
-        text,
-        time: currentTime()
-    }
+    const headerSchema = Joi.string().min(3).required();
+
+    const bodySchema = Joi.object({
+        to: Joi.string().min(3).required(),
+        text: Joi.string().min(3).required(),
+        type: Joi.string().valid("message", "private_message").required()
+    })
+
 
     try {
         await mongoClient.connect();
         db = mongoClient.db("test");
+
+        const newUser = await headerSchema.validateAsync(user);
+        const { to, type, text } = await bodySchema.validateAsync(body);
+
+        const resultSearch = await db.collection("participants").findOne({ name: newUser });
+        if (resultSearch === null) {
+            res.sendStatus(404);
+            return;
+        }
+
+        const message = {
+            from: newUser,
+            to,
+            type,
+            text,
+            time: currentTime()
+        }
 
         await db.collection("messages").insertOne(message);
         res.send(message);
