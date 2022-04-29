@@ -17,6 +17,7 @@ app.use(express.json());
 
 
 const currentTime = () => dayjs().format('HH:mm:ss');
+const userSchema = Joi.string().min(3).required();
 
 
 // conexão com o banco de dados
@@ -90,15 +91,37 @@ app.get("/participants", async (req, res) => {
         mongoClient.close()
     }
 })
-
+// FIXME: mensagens possivelmente enviadas ao contrário
 app.get("/messages", async (req, res) => {
+    const user = req.headers.user;
+    const limit = parseInt(req.query.limit);
+
+    try {
+        await mongoClient.connect();
+        db = mongoClient.db("test");
+
+        const newUser = await userSchema.validateAsync(user);
+        const messages = await db.collection("messages").find({ $or: [{ to: newUser }, { from: newUser }, { type: "message" }] }).toArray();
+
+        if (limit) {
+            res.send(messages.slice(-limit));
+        } else {
+            res.send(messages);
+        }
+        mongoClient.close();
+
+    } catch (e) {
+        console.log(e);
+        res.sendStatus(404);
+        mongoClient.close();
+    }
+
 })
 
 app.post("/messages", async (req, res) => {
     const user = req.headers.user;
     const body = req.body;
 
-    const headerSchema = Joi.string().min(3).required();
 
     const bodySchema = Joi.object({
         to: Joi.string().min(3).required(),
@@ -111,7 +134,7 @@ app.post("/messages", async (req, res) => {
         await mongoClient.connect();
         db = mongoClient.db("test");
 
-        const newUser = await headerSchema.validateAsync(user);
+        const newUser = await userSchema.validateAsync(user);
         const { to, type, text } = await bodySchema.validateAsync(body);
 
         const resultSearch = await db.collection("participants").findOne({ name: newUser });
