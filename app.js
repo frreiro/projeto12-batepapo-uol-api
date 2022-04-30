@@ -21,12 +21,40 @@ const userSchema = Joi.string().min(3).required();
 
 
 // conexão com o banco de dados
-const mongoClient = new MongoClient(process.env.MONGO_URI);
 let db = null;
+const mongoClient = new MongoClient(process.env.MONGO_URI);
+mongoClient.connect()
+    .then(() => {
+        db = mongoClient.db("test");
+        console.log(chalk.blue.bold("Conectado no banco de dados"))
+    })
+    .catch(error => console.log(chalk.red.bold("Não foi possível conectar no banco de dados"), error));
+
+setInterval(deleteInative, 15000)
+
+async function deleteInative() {
+    try {
+        const allParticipants = await db.collection("participants").find({}).toArray();
+        await allParticipants.forEach(async (participant) => {
+            const { name, lastStatus } = participant;
+            if (Date.now() - parseInt(lastStatus) >= 10000) {
+                await db.collection("participants").deleteOne(participant);
+                db.collection("messages").insertOne({
+                    from: name,
+                    to: 'Todos',
+                    text: 'sai da sala...',
+                    type: 'status',
+                    time: currentTime()
+                });
+            }
+        });
+    } catch (e) {
+        console.log(e);
+    }
+}
 
 
-
-//TODO: Validações de erros
+//TODO: Validações de erros no catch
 app.post("/participants", async (req, res) => {
     const { name } = req.body
 
@@ -49,8 +77,6 @@ app.post("/participants", async (req, res) => {
     }
 
     try {
-        await mongoClient.connect();
-        db = mongoClient.db("test");
 
         const objectValidated = await nameSchema.validateAsync({ name: name }) //valida se a string não ta vazia
         const namesFound = await db.collection("participants").find(objectValidated).toArray();
@@ -62,62 +88,50 @@ app.post("/participants", async (req, res) => {
         } else {
             res.sendStatus(409)
         }
-        mongoClient.close();
-
 
     } catch (e) {
         console.log(e);
         res.sendStatus(404)
-
-        mongoClient.close();
     }
 
 })
 
+//TODO: Validações de erros no catch
 app.get("/participants", async (req, res) => {
     try {
-        await mongoClient.connect();
-        db = mongoClient.db("test");
-
         const participants = await db.collection("participants").find().toArray();
         res.send(participants).status(200);
-
-        mongoClient.close()
 
     } catch (e) {
         console.log(e)
         res.sendStatus(500)
 
-        mongoClient.close()
     }
 })
-// FIXME: mensagens possivelmente enviadas ao contrário
+
+//TODO: Validações de erros no catch
 app.get("/messages", async (req, res) => {
     const user = req.headers.user;
     const limit = parseInt(req.query.limit);
 
     try {
-        await mongoClient.connect();
-        db = mongoClient.db("test");
-
         const newUser = await userSchema.validateAsync(user);
-        const messages = await db.collection("messages").find({ $or: [{ to: newUser }, { from: newUser }, { type: "message" }] }).toArray();
+        const messages = await db.collection("messages").find({ $or: [{ $or: [{ to: newUser }, { to: 'Todos' }] }, { from: newUser }, { type: "message" }] }).toArray();
 
         if (limit) {
             res.send(messages.slice(-limit));
         } else {
             res.send(messages);
         }
-        mongoClient.close();
 
     } catch (e) {
         console.log(e);
         res.sendStatus(404);
-        mongoClient.close();
     }
 
 })
 
+//TODO: Validações de erros no catch
 app.post("/messages", async (req, res) => {
     const user = req.headers.user;
     const body = req.body;
@@ -131,8 +145,6 @@ app.post("/messages", async (req, res) => {
 
 
     try {
-        await mongoClient.connect();
-        db = mongoClient.db("test");
 
         const newUser = await userSchema.validateAsync(user);
         const { to, type, text } = await bodySchema.validateAsync(body);
@@ -154,22 +166,37 @@ app.post("/messages", async (req, res) => {
         await db.collection("messages").insertOne(message);
         res.send(message);
 
-        mongoClient.close()
 
     } catch (e) {
         console.log(e);
-        res.send(500);
-
-        mongoClient.close();
-
+        res.sendStatus(500);
     }
 
 })
-//TODO: Validar se o usuário não consta na lista
-//TODO: Atualizar o lastStatus do usuário.
+
+//TODO: Validações de erros no catch
 app.post("/status", async (req, res) => {
     const user = req.headers.user;
 
+    try {
+        const newUser = await userSchema.validateAsync(user);
+
+        const search = await db.collection("participants").findOne({ name: newUser });
+        if (!search) {
+            res.sendStatus(404);
+            return;
+        }
+
+        await db.collection("participants").updateOne(
+            { name: newUser },
+            { $set: { lastStatus: Date.now() } });
+
+        res.sendStatus(200);
+
+    } catch (e) {
+        console.log(e);
+        res.sendStatus(500);
+    }
 })
 
 app.listen(5000, () => {
