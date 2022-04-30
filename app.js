@@ -18,6 +18,7 @@ app.use(express.json());
 
 const currentTime = () => dayjs().format('HH:mm:ss');
 const userSchema = Joi.string().min(3).required();
+const textError = (text) => chalk.red(text)
 
 
 // conexão com o banco de dados
@@ -25,13 +26,14 @@ let db = null;
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 mongoClient.connect()
     .then(() => {
-        db = mongoClient.db("test");
+        db = mongoClient.db(process.env.DB_NAME);
         console.log(chalk.blue.bold("Conectado no banco de dados"))
     })
     .catch(error => console.log(chalk.red.bold("Não foi possível conectar no banco de dados"), error));
 
 setInterval(deleteInative, 15000)
 
+//FIXME: aumentar a legibilidade do setInverval e deleteInative
 async function deleteInative() {
     try {
         const allParticipants = await db.collection("participants").find({}).toArray();
@@ -54,13 +56,10 @@ async function deleteInative() {
 }
 
 
-//TODO: Validações de erros no catch
+
+
 app.post("/participants", async (req, res) => {
     const { name } = req.body
-
-    const nameSchema = Joi.object({
-        name: Joi.string().alphanum().min(3).required()
-    })
 
 
     const participant = {
@@ -78,8 +77,8 @@ app.post("/participants", async (req, res) => {
 
     try {
 
-        const objectValidated = await nameSchema.validateAsync({ name: name }) //valida se a string não ta vazia
-        const namesFound = await db.collection("participants").find(objectValidated).toArray();
+        await userSchema.validateAsync(name, { abortEarly: false });
+        const namesFound = await db.collection("participants").find({ name }).toArray();
 
         if (!namesFound.length) { //verifica se ja existe o nome
             await db.collection("participants").insertOne(participant);
@@ -90,13 +89,17 @@ app.post("/participants", async (req, res) => {
         }
 
     } catch (e) {
-        console.log(e);
-        res.sendStatus(404)
+        if (e.isJoi) {
+            e.details.forEach(detail => console.log(textError(detail.message)))
+            res.status(422).send(e.details.map(detail => detail.message))
+        } else {
+            console.log(e);
+            res.sendStatus(404)
+        }
     }
 
 })
 
-//TODO: Validações de erros no catch
 app.get("/participants", async (req, res) => {
     try {
         const participants = await db.collection("participants").find().toArray();
@@ -109,13 +112,12 @@ app.get("/participants", async (req, res) => {
     }
 })
 
-//TODO: Validações de erros no catch
 app.get("/messages", async (req, res) => {
     const user = req.headers.user;
     const limit = parseInt(req.query.limit);
 
     try {
-        const newUser = await userSchema.validateAsync(user);
+        const newUser = await userSchema.validateAsync(user, { abortEarly: false });
         const messages = await db.collection("messages").find({ $or: [{ $or: [{ to: newUser }, { to: 'Todos' }] }, { from: newUser }, { type: "message" }] }).toArray();
 
         if (limit) {
@@ -125,29 +127,33 @@ app.get("/messages", async (req, res) => {
         }
 
     } catch (e) {
-        console.log(e);
-        res.sendStatus(404);
+        if (e.isJoi) {
+            e.details.forEach(detail => console.log(textError(detail.message)))
+            res.status(422).send(e.details.map(detail => detail.message))
+        } else {
+            console.log(e);
+            res.sendStatus(404)
+        }
     }
 
 })
 
-//TODO: Validações de erros no catch
 app.post("/messages", async (req, res) => {
     const user = req.headers.user;
     const body = req.body;
 
 
     const bodySchema = Joi.object({
-        to: Joi.string().min(3).required(),
-        text: Joi.string().min(3).required(),
+        to: Joi.string().required(),
+        text: Joi.string().required(),
         type: Joi.string().valid("message", "private_message").required()
     })
 
 
     try {
 
-        const newUser = await userSchema.validateAsync(user);
-        const { to, type, text } = await bodySchema.validateAsync(body);
+        const newUser = await userSchema.validateAsync(user, { abortEarly: false });
+        const { to, type, text } = await bodySchema.validateAsync(body, { abortEarly: false });
 
         const resultSearch = await db.collection("participants").findOne({ name: newUser });
         if (resultSearch === null) {
@@ -168,18 +174,22 @@ app.post("/messages", async (req, res) => {
 
 
     } catch (e) {
-        console.log(e);
-        res.sendStatus(500);
+        if (e.isJoi) {
+            e.details.forEach(detail => console.log(textError(detail.message)))
+            res.status(422).send(e.details.map(detail => detail.message))
+        } else {
+            console.log(e);
+            res.sendStatus(500)
+        }
     }
 
 })
 
-//TODO: Validações de erros no catch
 app.post("/status", async (req, res) => {
     const user = req.headers.user;
 
     try {
-        const newUser = await userSchema.validateAsync(user);
+        const newUser = await userSchema.validateAsync(user, { abortEarly: false });
 
         const search = await db.collection("participants").findOne({ name: newUser });
         if (!search) {
@@ -194,8 +204,13 @@ app.post("/status", async (req, res) => {
         res.sendStatus(200);
 
     } catch (e) {
-        console.log(e);
-        res.sendStatus(500);
+        if (e.isJoi) {
+            e.details.forEach(detail => console.log(textError(detail.message)))
+            res.status(422).send(e.details.map(detail => detail.message))
+        } else {
+            console.log(e);
+            res.sendStatus(500)
+        }
     }
 })
 
