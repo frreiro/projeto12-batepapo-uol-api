@@ -2,13 +2,14 @@ import express from "express";
 import chalk from "chalk";
 import cors from "cors";
 import dotenv from "dotenv";
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import dayjs from "dayjs";
 import Joi from "joi";
+import { strict as assert } from "assert";
+import { stripHtml } from "string-strip-html";
 
 
 dotenv.config();
-
 console.log()
 
 const app = express();
@@ -17,7 +18,7 @@ app.use(express.json());
 
 
 const currentTime = () => dayjs().format('HH:mm:ss');
-const userSchema = Joi.string().min(3).required();
+const userSchema = Joi.string().min(1).required();
 const textError = (text) => chalk.red(text)
 
 
@@ -31,9 +32,10 @@ mongoClient.connect()
     })
     .catch(error => console.log(chalk.red.bold("Não foi possível conectar no banco de dados"), error));
 
-setInterval(deleteInative, 15000)
 
 //FIXME: aumentar a legibilidade do setInverval e deleteInative
+setInterval(deleteInative, 15000)
+
 async function deleteInative() {
     try {
         const allParticipants = await db.collection("participants").find({}).toArray();
@@ -56,11 +58,10 @@ async function deleteInative() {
 }
 
 
-
-
 app.post("/participants", async (req, res) => {
-    const { name } = req.body
+    const { name: dirtyName } = req.body
 
+    const name = (stripHtml(dirtyName).result).trim()
 
     const participant = {
         name: name,
@@ -83,7 +84,7 @@ app.post("/participants", async (req, res) => {
         if (!namesFound.length) { //verifica se ja existe o nome
             await db.collection("participants").insertOne(participant);
             await db.collection("messages").insertOne(enter);
-            res.sendStatus(201);
+            res.status(201).send({ name });
         } else {
             res.sendStatus(409)
         }
@@ -212,6 +213,26 @@ app.post("/status", async (req, res) => {
             res.sendStatus(500)
         }
     }
+})
+
+app.delete("/messages/:idMessage", async (req, res) => {
+    const { user } = req.headers;
+    const { idMessage } = req.params;
+
+    try {
+        const messageFound = await db.collection("messages").findOne({ _id: new ObjectId(idMessage) });
+        if (!messageFound) {
+            res.sendStatus(404);
+        }
+        if (messageFound.from !== user) {
+            res.sendStatus(401);
+        }
+        await db.collection("messages").deleteOne({ _id: new ObjectId(idMessage) });
+        res.sendStatus(200);
+    } catch (e) {
+        res.sendStatus(500);
+    }
+
 })
 
 app.listen(5000, () => {
