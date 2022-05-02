@@ -20,7 +20,21 @@ app.use(express.json());
 const currentTime = () => dayjs().format('HH:mm:ss');
 const userSchema = Joi.string().min(1).required();
 const textError = (text) => chalk.red(text)
+const messageSchema = Joi.object({
+    to: Joi.string().required(),
+    text: Joi.string().required(),
+    type: Joi.string().valid("message", "private_message").required()
+})
 
+const leaveRoomMessage = (name) => {
+    return {
+        from: name,
+        to: 'Todos',
+        text: 'sai da sala...',
+        type: 'status',
+        time: currentTime()
+    }
+}
 
 // conexão com o banco de dados
 let db = null;
@@ -43,13 +57,7 @@ async function deleteInative() {
             const { name, lastStatus } = participant;
             if (Date.now() - parseInt(lastStatus) >= 10000) {
                 await db.collection("participants").deleteOne(participant);
-                db.collection("messages").insertOne({
-                    from: name,
-                    to: 'Todos',
-                    text: 'sai da sala...',
-                    type: 'status',
-                    time: currentTime()
-                });
+                db.collection("messages").insertOne(leaveRoomMessage(name));
             }
         });
     } catch (e) {
@@ -59,9 +67,7 @@ async function deleteInative() {
 
 
 app.post("/participants", async (req, res) => {
-    const { name: dirtyName } = req.body
-
-    const name = (stripHtml(dirtyName).result).trim()
+    const name = stripHtml(req.body.name).result.trim()
 
     const participant = {
         name: name,
@@ -123,8 +129,10 @@ app.get("/messages", async (req, res) => {
 
         if (limit) {
             res.send(messages.slice(-limit));
+            return;
         } else {
             res.send(messages);
+            return;
         }
 
     } catch (e) {
@@ -143,18 +151,10 @@ app.post("/messages", async (req, res) => {
     const user = req.headers.user;
     const body = req.body;
 
-
-    const bodySchema = Joi.object({
-        to: Joi.string().required(),
-        text: Joi.string().required(),
-        type: Joi.string().valid("message", "private_message").required()
-    })
-
-
     try {
 
         const newUser = await userSchema.validateAsync(user, { abortEarly: false });
-        const { to, type, text } = await bodySchema.validateAsync(body, { abortEarly: false });
+        const { to, type, text } = await messageSchema.validateAsync(body, { abortEarly: false });
 
         const resultSearch = await db.collection("participants").findOne({ name: newUser });
         if (resultSearch === null) {
@@ -219,13 +219,16 @@ app.delete("/messages/:idMessage", async (req, res) => {
     const { user } = req.headers;
     const { idMessage } = req.params;
 
+
     try {
         const messageFound = await db.collection("messages").findOne({ _id: new ObjectId(idMessage) });
         if (!messageFound) {
             res.sendStatus(404);
+            return;
         }
         if (messageFound.from !== user) {
             res.sendStatus(401);
+            return;
         }
         await db.collection("messages").deleteOne({ _id: new ObjectId(idMessage) });
         res.sendStatus(200);
@@ -234,6 +237,40 @@ app.delete("/messages/:idMessage", async (req, res) => {
     }
 
 })
+
+app.put("/messages/:idMessage", async (req, res) => {
+    const { idMessage } = req.params
+    const { user: from } = req.headers
+    const body = req.body;
+
+    try {
+        const { to, type, text } = await messageSchema.validateAsync(body, { abortEarly: false });
+        const messageFound = await db.collection("messages").findOne({ _id: new ObjectId(idMessage) });
+        if (!messageFound) {
+            res.sendStatus(404);
+            return;
+        }
+        if (messageFound.from !== from) {
+            res.sendStatus(401);
+            return;
+        }
+        await db.collection("messages").updateOne({ _id: new ObjectId(idMessage) }, {
+            $set: {
+                from,
+                to,
+                text,
+                type
+            }
+        })
+        res.sendStatus(200);
+
+    } catch (e) {
+        res.sendStatus(500);
+    }
+
+})
+
+
 
 app.listen(5000, () => {
     console.log(chalk.bold.green("Server is running..."));
